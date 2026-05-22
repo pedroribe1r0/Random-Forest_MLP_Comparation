@@ -3,12 +3,11 @@ import time
 import warnings
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, classification_report, roc_auc_score
-)
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report, roc_auc_score
 
 warnings.filterwarnings('ignore')
 
@@ -17,153 +16,122 @@ class PipelineSinaisVitaisRF:
         self.pasta_dados = pasta_dados
         self.arq_com_label = arq_com_label
         self.arq_sem_label = arq_sem_label
-        
-        # Estruturas de dados internas
-        self.X = None
-        self.y = None
-        self.X_train = None
-        self.X_test = None
-        self.y_train = None
-        self.y_test = None
+        self.X, self.y = None, None
+        self.X_train, self.X_test, self.y_train, self.y_test = [None] * 4
         self.melhor_modelo = None
 
     def carregar_e_tratar_dados(self):
-        print("\n" + "="*60)
-        print(" [FASE 1] CARREGAMENTO E ENGENHARIA DE ATRIBUTOS")
-        print("="*60)
-        
+        print("\n=== [FASE 1] CARREGAMENTO E ENGENHARIA DE ATRIBUTOS ===")
         caminho_com = os.path.join(self.pasta_dados, self.arq_com_label) if os.path.exists(self.pasta_dados) else self.arq_com_label
-        caminho_sem = os.path.join(self.pasta_dados, self.arq_sem_label) if os.path.exists(self.pasta_dados) else self.arq_sem_label
         
         if not os.path.exists(caminho_com):
-            raise FileNotFoundError(f"Arquivo contendo as labels não encontrado: {caminho_com}")
+            raise FileNotFoundError(f"Arquivo de labels não encontrado: {caminho_com}")
 
-        print(f"[-] Carregando base de treino rotulada: {caminho_com}")
-        # header=None pois os txts começam direto nos dados numéricos
         df_rotulado = pd.read_csv(caminho_com, header=None, sep=',')
+        self.X = df_rotulado.iloc[:, 3:6] 
+        self.y = df_rotulado.iloc[:, 7].astype(int)
         
-        print(f"    -> Dimensões brutas encontradas: {df_rotulado.shape}")
-        
-        # Coluna 0 = ID sequencial (deve ser descartada para evitar overfitting)
-        # Colunas 1 até 6 = Características reais dos Sinais Vitais (Features)
-        # Coluna 7 = Alvo/Classe (Target)
-        
-        self.X = df_rotulado.iloc[:, 1:7] # Seleciona apenas as colunas de sinais vitais
-        self.y = df_rotulado.iloc[:, 7].astype(int)   # Seleciona a última coluna como classe alvo
-        
-        print(f"[+] Ruído de ID removido. Quantidade de Predritores (Features): {self.X.shape[1]}")
-        print(f"[-] Distribuição volumétrica das classes na base:")
-        for classe, qtd in self.y.value_counts().items():
-            print(f"    -> Classe {classe}: {qtd} registros de pacientes.")
+        print(f"[+] Dados carregados. Preditores: {self.X.shape[1]} | Registros: {self.X.shape[0]}")
 
-        # Divisão Holdout em Treino (70%) e Teste (30%)
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             self.X, self.y, test_size=0.3, random_state=42, stratify=self.y
         )
-        print(f"[+] Dados divididos com sucesso: Treino={self.X_train.shape[0]} | Teste={self.X_test.shape[0]}")
+        print(f"[+] Divisão Holdout: Treino={self.X_train.shape[0]} | Teste={self.X_test.shape[0]}")
 
     def otimizar_e_treinar(self):
-        print("\n" + "="*60)
-        print(" [FASE 2] OTIMIZAÇÃO DE HIPERPARÂMETROS (GRID SEARCH)")
-        print("="*60)
-        
-        # Mapeamento de busca focado na teoria de árvores de decisão
+        print("\n=== [FASE 2] OTIMIZAÇÃO DE HIPERPARÂMETROS (GRID SEARCH) ===")
         param_grid = {
-            'n_estimators': [50, 100, 200],         # Quantidade de árvores no comitê
-            'criterion': ['gini', 'entropy'],       # Métrica matemática de ganho de informação
-            'max_depth': [None, 10, 15],            # Poda vertical para evitar sobreajuste
-            'min_samples_split': [2, 5]             # Controle de divisão de nós internos
+            'n_estimators': [50, 100, 200],
+            'criterion': ['gini', 'entropy'],
+            'max_depth': [None, 10, 15],
+            'min_samples_split': [2, 5]
         }
         
         rf_base = RandomForestClassifier(random_state=42, n_jobs=-1)
-        
         cv_estratificado = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         
-        print("[-] Iniciando buscas exaustivas pelas melhores árvores...")
+        print("[-] Buscando melhor configuração de parâmetros...")
         inicio = time.time()
-        grid_search = GridSearchCV(
-            estimator=rf_base, param_grid=param_grid, 
-            cv=cv_estratificado, scoring='accuracy', n_jobs=-1
-        )
+        grid_search = GridSearchCV(estimator=rf_base, param_grid=param_grid, cv=cv_estratificado, scoring='accuracy', n_jobs=-1)
         grid_search.fit(self.X_train, self.y_train)
         
         self.melhor_modelo = grid_search.best_estimator_
-        print(f"[+] Processo concluído em {time.time() - inicio:.2f} segundos.")
-        print("\n>>> CONFIGURAÇÃO ÓTIMA DA FLORESTA ENCONTRADA:")
-        for param, valor in grid_search.best_params_.items():
-            print(f"    * {param}: {valor}")
-        print(f"    * Acurácia Média na Validação Cruzada: {grid_search.best_score_:.4f}")
+        print(f"[+] Treinamento concluído em {time.time() - inicio:.2f} segundos.")
+        print(f"[+] Melhor Acurácia na Validação Cruzada: {grid_search.best_score_:.4f}")
 
     def avaliar_performance(self):
-        print("\n" + "="*60)
-        print(" [FASE 3] EXTRACÃO DE MÉTRICAS MULTICRITERIO (TESTE)")
-        print("="*60)
-        
-        # Predições no conjunto de teste isolado
+        print("\n=== [FASE 3] EXTRAÇÃO DE MÉTRICAS NO TESTE ===")
         y_pred = self.melhor_modelo.predict(self.X_test)
         y_prob = self.melhor_modelo.predict_proba(self.X_test)
         
-        acuracia = accuracy_score(self.y_test, y_pred)
-        precisao = precision_score(self.y_test, y_pred, average='weighted')
-        recall = recall_score(self.y_test, y_pred, average='weighted')
-        f1 = f1_score(self.y_test, y_pred, average='weighted')
-        auc_roc = roc_auc_score(self.y_test, y_prob, multi_class='ovr', average='weighted')
+        print(f"-> Acurácia:  {accuracy_score(self.y_test, y_pred):.4f}")
+        print(f"-> Precisão:  {precision_score(self.y_test, y_pred, average='weighted'):.4f}")
+        print(f"-> Recall:    {recall_score(self.y_test, y_pred, average='weighted'):.4f}")
+        print(f"-> F1-Score:  {f1_score(self.y_test, y_pred, average='weighted'):.4f}")
+        print(f"-> AUC-ROC:   {roc_auc_score(self.y_test, y_prob, multi_class='ovr', average='weighted'):.4f}")
         
-        print(f"[+] Resultados Consolidados no Conjunto Inédito:")
-        print(f"    - Acurácia:   {acuracia:.4f} ({acuracia*100:.2f}%)")
-        print(f"    - Precisão:   {precisao:.4f}")
-        print(f"    - Recall:     {recall:.4f}")
-        print(f"    - F1-Score:   {f1:.4f}")
-        print(f"    - AUC-ROC:    {auc_roc:.4f}")
+    def gerar_graficos_artigo(self):
+        print("\n=== [FASE 4] GERANDO GRÁFICOS PARA O ARTIGO ===")
+        y_pred = self.melhor_modelo.predict(self.X_test)
+        sns.set_theme(style="whitegrid")
         
-        print("\n[-] Matriz de Confusão:")
-        print(confusion_matrix(self.y_test, y_pred))
-        
-        print("\n[-] Relatório Detalhado por Classe de Sinais Vitais:")
-        print(classification_report(self.y_test, y_pred))
-        
-        print("-" * 50)
-        print(" Relevância dos Sinais Vitais para o Modelo:")
+        # 1. Matriz de Confusão
+        cm = confusion_matrix(self.y_test, y_pred)
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', linewidths=.5, cbar=False, annot_kws={"size": 12})
+        plt.title('Matriz de Confusão - Random Forest', fontsize=12, pad=12)
+        plt.xlabel('Classe Predita', fontsize=10)
+        plt.ylabel('Classe Real', fontsize=10)
+        plt.tight_layout()
+        plt.savefig('figura1_matriz_confusao.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        print("[+] 'figura1_matriz_confusao.png' salva com sucesso.")
+
+        # 2. Importância das Features
         importancias = self.melhor_modelo.feature_importances_
-        for i, imp in enumerate(importancias):
-            print(f"    Sinal Vital (Coluna {i+1}) -> Importância Relativa: {imp:.4f}")
-        print("="*60)
+        indices = np.argsort(importancias)[::-1]
+        
+        nomes_features = [f"Sinal Vital {i+1}" for i in range(len(importancias))]
+        nomes_ordenados = [nomes_features[i] for i in indices]
+        valores_ordenados = importancias[indices]
+
+        plt.figure(figsize=(8, 5))
+        sns.barplot(x=valores_ordenados, y=nomes_ordenados, palette='viridis')
+        plt.title('Importância Relativa dos Sinais Vitais', fontsize=12, pad=12)
+        plt.xlabel('Importância (Métrica Gini/Entropy)', fontsize=10)
+        plt.ylabel('Características', fontsize=10)
+        
+        for index, value in enumerate(valores_ordenados):
+            plt.text(value, index, f' {value:.3f}', va='center', fontsize=10)
+            
+        plt.tight_layout()
+        plt.savefig('figura2_importancia_features.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        print("[+] 'figura2_importancia_features.png' salva com sucesso.")
 
     def inferir_dados_sem_label(self):
-        print("\n" + "="*60)
-        print(" [FASE 4] INFERÊNCIA EM DADOS NOVOS (SEM LABEL)")
-        print("="*60)
-        
+        print("\n=== [FASE 5] INFERÊNCIA EM DADOS NOVOS ===")
         caminho_sem = os.path.join(self.pasta_dados, self.arq_sem_label) if os.path.exists(self.pasta_dados) else self.arq_sem_label
         
         if not os.path.exists(caminho_sem):
             print(f"[AVISO] Arquivo {self.arq_sem_label} não encontrado para inferência.")
             return
             
-        print(f"[-] Carregando dados sem rótulo para predição: {caminho_sem}")
         df_sem = pd.read_csv(caminho_sem, header=None, sep=',')
-        
-        # Isolar os IDs originais e capturar apenas os mesmos preditores do treino (Colunas 1 a 6)
         ids_originais = df_sem.iloc[:, 0]
-        X_novos = df_sem.iloc[:, 1:7]
-        
-        print("[-] Executando predições com o modelo otimizado...")
+        X_novos = df_sem.iloc[:, 3:6]        
         predicoes_finais = self.melhor_modelo.predict(X_novos)
         
-        df_resultados = pd.DataFrame({
-            'ID_Paciente': ids_originais,
-            'Classe_Predita': predicoes_finais
-        })
-        
+        df_resultados = pd.DataFrame({'ID_Paciente': ids_originais, 'Classe_Predita': predicoes_finais})
         nome_saida = 'predicoes_sinais_vitais.txt'
         df_resultados.to_csv(nome_saida, index=False, sep=',')
-        print(f"[SUCESSO] Arquivo '{nome_saida}' gerado com as predições salvos para entrega!")
-        print("="*60)
+        print(f"[SUCESSO] Arquivo '{nome_saida}' exportado.")
 
     def executar(self):
         self.carregar_e_tratar_dados()
         self.otimizar_e_treinar()
         self.avaliar_performance()
+        self.gerar_graficos_artigo()
         self.inferir_dados_sem_label()
 
 if __name__ == "__main__":
